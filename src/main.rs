@@ -1,81 +1,21 @@
 use std::fs;
 use std::path::Path;
 use std::net::TcpStream;
+use std::io::{prelude::*, Cursor};
 
+use base64;
 use mysql::prelude::*;
 use mysql::*;
 use native_tls::{TlsConnector, TlsStream};
 use imap;
-use imap_proto::types::BodyStructure;
+use imap_proto::types::SectionPath;
 use regex::Regex;
 use toml;
+use zip;
 
 mod config;
-
-#[derive(Debug, Eq, PartialEq)]
-enum ReportFileType {
-	Zip,
-	Gzip
-}
-
-/// Searches the given IMAP BodyStructure for a report file.
-fn find_report(body_structure: &imap_proto::types::BodyStructure, prefix: String) -> Option<(String, ReportFileType)> {
-	match body_structure {
-		BodyStructure::Multipart { common: _, bodies, extension: _ } => {
-			// unwrap the multipart message
-			for (i, body) in bodies.iter().enumerate() {
-				let mut actual_prefix = prefix.clone();
-				if actual_prefix != "" {
-					actual_prefix += ".";
-				}
-				let result = find_report(body, actual_prefix + &i.to_string());
-				if result.is_some() {
-					return result;
-				}
-			}
-
-			None
-		},
-
-		BodyStructure::Basic { common, other: _, extension: _ } => {
-			// this might be our attachment
-			// check if it's a filetype we know about
-			// println!("{:#?}", common);
-			println!("{:#?}", common.ty);
-			let filetype_option = match (
-				common.ty.ty.to_lowercase().as_str(),
-				common.ty.subtype.to_lowercase().as_str()
-			) {
-				("application", "gzip") => Some(ReportFileType::Gzip),
-				("application", "zip") => Some(ReportFileType::Zip),
-				_ => None,
-			};
-
-			let part_number = match prefix.as_str() {
-				"" => "1".to_string(),
-				_ => prefix,
-			};
-
-			match filetype_option {
-				Some(filetype) => Some((part_number, filetype)),
-				None => None,
-			}
-		},
-
-		BodyStructure::Message { common: _, other: _, envelope: _, body: _, lines: _, extension: _, } => {
-			// we shouldn't get this
-			// ignore it
-
-			None
-		},
-		BodyStructure::Text { common: _, other: _, lines: _, extension: _ } => {
-			// don't care about text, it's probably just some human-readable message
-			// ignore it
-
-			None
-		},
-	}
-}
+mod message;
+mod types;
 
 fn main() {
 	let re = Regex::new(r"Report-ID: (.*)").unwrap();
@@ -123,11 +63,43 @@ fn main() {
 			let report_id = captures.get(1).unwrap().as_str();
 
 			if let Some(bodystructure) = fetch_result.bodystructure() {
-				let report_info = find_report(bodystructure, "".to_string());
+				let report_info = message::find_report(bodystructure, "".to_string());
 				if let Some((part_number, report_type)) = report_info {
-					println!("{} {:?}", part_number, report_type);
+					let section = format!("BODY[{}]", part_number);
+
+					if report_type != types::ReportFileType::Zip {
+						panic!("Non-zip reports not supported yet!");
+					}
+
+					let message_results = dmarc_session.fetch(&fetch_result.message.to_string(), section).unwrap();
+					let message	= message_results.first().unwrap();
+
+					let body_data = message.section(&SectionPath::Part(
+						[ 1 ].to_vec(), None
+					)).unwrap();
+					let body_text = std::str::from_utf8(body_data).unwrap().to_owned();
+					let body_text_no_lines = body_text.replace("\r", "").replace("\n", "");
+
+					if let Ok(decoded_data) = base64::decode(body_text_no_lines.as_bytes()) {
+						let body_reader = Cursor::new(decoded_data);
+
+						let mut archive = zip::ZipArchive::new(body_reader).unwrap();
+
+						if archive.len() != 1 {
+							println!("Couldn't find report file in message for ID {}", report_id);
+							continue;
+						}
+
+						let report_file = archive.by_index(0).unwrap();
+						println!("{}", report_file.name());
+						let file_bytes = report_file.bytes().map(|x| x.unwrap()).collect::<Vec<_>>();
+						println!("{}", String::from_utf8(file_bytes).unwrap());
+					} else {
+						println!("Couldn't decode base64 in message for ID {}", report_id);
+					}
+					return;
 				} else {
-					println!("Couldn't find report file in message for ID {}", report_id);
+					println!("Couldn't find report archive in message for ID {}", report_id);
 				}
 			} else {
 				println!("Skipping report ID {}", report_id);
