@@ -1,5 +1,11 @@
-use super::types;
+use flate2::read::GzDecoder;
 use imap_proto::types::BodyStructure;
+use simple_error::bail;
+use std::boxed::Box;
+use std::error::Error;
+use std::io::{prelude::*, Cursor};
+use super::types;
+use zip;
 
 /// Searches the given IMAP BodyStructure for a report file.
 pub fn find_report(body_structure: &BodyStructure, prefix: String) -> Option<(String, types::ReportFileType)> {
@@ -11,7 +17,7 @@ pub fn find_report(body_structure: &BodyStructure, prefix: String) -> Option<(St
 				if actual_prefix != "" {
 					actual_prefix += ".";
 				}
-				let result = find_report(body, actual_prefix + &i.to_string());
+				let result = find_report(body, actual_prefix + &(i + 1).to_string());
 				if result.is_some() {
 					return result;
 				}
@@ -55,5 +61,28 @@ pub fn find_report(body_structure: &BodyStructure, prefix: String) -> Option<(St
 
 			None
 		},
+	}
+}
+
+/// Given a report type and the raw data in bytes, decompresses the report into a String containing XML.
+pub fn read_report(report_type: types::ReportFileType, data: Vec<u8>) -> Result<String, Box<dyn Error>> {
+	let body_reader = Cursor::new(data);
+	match report_type {
+		types::ReportFileType::Gzip => {
+			let mut d = GzDecoder::new(body_reader);
+			let mut result = String::new();
+			d.read_to_string(&mut result)?;
+			Ok(result)
+		},
+		types::ReportFileType::Zip => {
+			let mut archive = zip::ZipArchive::new(body_reader)?;
+
+			if archive.len() != 1 {
+				bail!("ZIP archive has multiple or no files");
+			}
+
+			let report_file = archive.by_index(0)?;
+			Ok(report_file.bytes().map(|x| x.unwrap() as char).collect::<String>())
+		}
 	}
 }

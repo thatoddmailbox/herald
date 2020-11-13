@@ -63,6 +63,7 @@ pub struct RecordDKIMResult {
 #[serde(default)]
 pub struct RecordSPFResult {
 	domain: String,
+	scope: String,
 	result: String
 }
 

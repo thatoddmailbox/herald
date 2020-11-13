@@ -1,7 +1,6 @@
 use std::fs;
 use std::path::Path;
 use std::net::TcpStream;
-use std::io::{prelude::*, Cursor};
 
 use base64;
 use mysql::prelude::*;
@@ -12,7 +11,6 @@ use imap_proto::types::SectionPath;
 use regex::Regex;
 use serde_xml_rs::from_reader;
 use toml;
-use zip;
 
 mod config;
 mod dmarc;
@@ -81,19 +79,19 @@ fn main() {
 			println!("Couldn't find report archive in message for ID {}", report_id);
 			continue;
 		};
-		if report_type != types::ReportFileType::Zip {
-			panic!("Non-zip reports not supported yet!");
-		}
 
 		// try to get the right part from the message
 		let section = format!("BODY[{}]", part_number);
 		let message_results = dmarc_session.fetch(&fetch_result.message.to_string(), section).unwrap();
 		let message	= message_results.first().unwrap();
 
+		let parsed_path = part_number.split(".").map(|x| {
+			x.parse::<u32>().unwrap()
+		}).collect::<Vec<u32>>();
+
 		// get the body text
-		// TODO: don't just hardcode this as 1?
 		let body_data = message.section(&SectionPath::Part(
-			[ 1 ].to_vec(), None
+			parsed_path, None
 		)).unwrap();
 		let body_text = std::str::from_utf8(body_data).unwrap().to_owned();
 		let body_text_no_lines = body_text.replace("\r", "").replace("\n", "");
@@ -104,17 +102,8 @@ fn main() {
 			continue;
 		};
 
-		// extract as zip file
-		let body_reader = Cursor::new(decoded_data);
-		let mut archive = zip::ZipArchive::new(body_reader).unwrap();
-
-		if archive.len() != 1 {
-			println!("Couldn't find report file in message for ID {}", report_id);
-			continue;
-		}
-
-		let report_file = archive.by_index(0).unwrap();
-		let file_bytes = report_file.bytes().map(|x| x.unwrap() as char).collect::<String>();
+		// extract it
+		let file_bytes = message::read_report(report_type, decoded_data).unwrap();
 		println!("{}", file_bytes);
 		let report: dmarc::types::Report = from_reader(file_bytes.as_bytes()).unwrap();
 		println!("{:#?}", report);
