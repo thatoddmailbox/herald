@@ -10,10 +10,12 @@ use native_tls::{TlsConnector, TlsStream};
 use imap;
 use imap_proto::types::SectionPath;
 use regex::Regex;
+use serde_xml_rs::from_reader;
 use toml;
 use zip;
 
 mod config;
+mod dmarc;
 mod message;
 mod types;
 
@@ -55,6 +57,7 @@ fn main() {
 
 	let fetch_results = dmarc_session.fetch("1:90", "ALL BODYSTRUCTURE").unwrap();
 
+	let mut i = 0;
 	for fetch_result in fetch_results.iter() {
 		let envelope: &imap_proto::types::Envelope = fetch_result.envelope().unwrap();
 		let subject_text = String::from_utf8_lossy(envelope.subject.unwrap_or(b""));
@@ -113,8 +116,13 @@ fn main() {
 		let report_file = archive.by_index(0).unwrap();
 		let file_bytes = report_file.bytes().map(|x| x.unwrap() as char).collect::<String>();
 		println!("{}", file_bytes);
+		let report: dmarc::types::Report = from_reader(file_bytes.as_bytes()).unwrap();
+		println!("{:#?}", report);
 
-		break;
+		i += 1;
+		if i == 20 {
+			break;
+		}
 	}
 
 	dmarc_session.logout().unwrap();
