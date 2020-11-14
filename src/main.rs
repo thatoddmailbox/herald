@@ -55,7 +55,6 @@ fn main() {
 
 	let fetch_results = dmarc_session.fetch("1:90", "ALL BODYSTRUCTURE").unwrap();
 
-	let mut i = 0;
 	for fetch_result in fetch_results.iter() {
 		let envelope: &imap_proto::types::Envelope = fetch_result.envelope().unwrap();
 		let subject_text = String::from_utf8_lossy(envelope.subject.unwrap_or(b""));
@@ -104,14 +103,8 @@ fn main() {
 
 		// extract it
 		let file_bytes = message::read_report(report_type, decoded_data).unwrap();
-		println!("{}", file_bytes);
 		let report: dmarc::types::Report = from_reader(file_bytes.as_bytes()).unwrap();
 		println!("{:#?}", report);
-
-		i += 1;
-		if i == 20 {
-			break;
-		}
 	}
 
 	dmarc_session.logout().unwrap();
