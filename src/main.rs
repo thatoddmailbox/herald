@@ -50,10 +50,9 @@ fn main() {
 	let client = imap::connect((config.dmarc.host, config.dmarc.port), config.dmarc.host, &tls).unwrap();
 	let mut dmarc_session: imap::Session<TlsStream<TcpStream>> = client.login(config.dmarc.username, config.dmarc.password).map_err(|e| e.0).unwrap();
 
-	let mailbox = dmarc_session.select("INBOX").unwrap();
-	// println!("{:#?}", mailbox);
+	dmarc_session.select("INBOX").unwrap();
 
-	let fetch_results = dmarc_session.fetch("1:90", "ALL BODYSTRUCTURE").unwrap();
+	let fetch_results = dmarc_session.fetch("1:*", "ALL BODYSTRUCTURE").unwrap();
 
 	for fetch_result in fetch_results.iter() {
 		let envelope: &imap_proto::types::Envelope = fetch_result.envelope().unwrap();
