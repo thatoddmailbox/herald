@@ -11,7 +11,7 @@ base64 = "0.12.3"
 flate2 = "1.0.19"
 imap = { version = "2.1.2", features = ["tls"] }
 imap-proto = "0.10.2"
-mysql = "18.2.0"
+mysql = "20.1.0"
 native-tls = "0.2.4"
 regex = "1"
 serde = { version = "1.0.114", features = ["derive"] }
