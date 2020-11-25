@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -18,7 +18,7 @@ pub struct ReportMetadata {
 	pub error: String
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Policy {
 	pub domain: String,
@@ -29,7 +29,7 @@ pub struct Policy {
 	pub pct: u8
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct RecordRowPolicy {
 	pub disposition: String,
@@ -45,13 +45,13 @@ pub struct RecordRow {
 	pub policy_evaluated: RecordRowPolicy
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct RecordIdentifiers {
 	pub header_from: String
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct RecordDKIMResult {
 	pub domain: String,
@@ -59,7 +59,7 @@ pub struct RecordDKIMResult {
 	pub selector: String
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct RecordSPFResult {
 	pub domain: String,
@@ -67,7 +67,7 @@ pub struct RecordSPFResult {
 	pub result: String
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct RecordResults {
 	pub dkim: Vec<RecordDKIMResult>,

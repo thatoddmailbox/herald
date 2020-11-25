@@ -1,8 +1,10 @@
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::Path;
 use std::net::TcpStream;
+use std::path::Path;
 
 use base64;
+use chrono::Utc;
 use mysql::prelude::*;
 use mysql::*;
 use native_tls::{TlsConnector, TlsStream};
@@ -36,11 +38,24 @@ fn main() {
 	/*
 	 * database connection
 	 */
-	// let pool = Pool::new(format!(
-	// 	"mysql://{}:{}@{}/{}",
-	// 	config.database.username, config.database.password, config.database.host, config.database.database
-	// )).unwrap();
-	// let mut db_conn = pool.get_conn().unwrap();
+	let pool = Pool::new(format!(
+		"mysql://{}:{}@{}/{}",
+		config.database.username, config.database.password, config.database.host, config.database.database
+	)).unwrap();
+	let mut db_conn = pool.get_conn().unwrap();
+
+	/*
+	 * prepare for reading reports
+	 */
+	let mut processed_reports = HashSet::new();
+	for message_id in db_conn.query::<String, &str>("SELECT message_id FROM dmarc_reports").unwrap() {
+		processed_reports.insert(message_id);
+	}
+
+	let mut organization_map: HashMap<(String, String, String), u64> = HashMap::new();
+	for (id, name, email, extra_contact_info) in db_conn.query::<(u64, String, String, String), &str>("SELECT id, name, email, extra_contact_info FROM dmarc_organizations").unwrap() {
+		organization_map.insert((name, email, extra_contact_info), id);
+	}
 
 	/*
 	 * imap connection
@@ -64,6 +79,12 @@ fn main() {
 			continue;
 		};
 		let report_id = captures.get(1).unwrap().as_str();
+
+		let message_id = String::from_utf8_lossy(envelope.message_id.unwrap()).to_string();
+		if processed_reports.contains(&message_id) {
+			// we processed this already
+			continue;
+		}
 
 		// try to get the bodystructure
 		let bodystructure = if let Some(x) = fetch_result.bodystructure() { x } else {
@@ -103,7 +124,59 @@ fn main() {
 		// extract it
 		let file_bytes = message::read_report(report_type, decoded_data).unwrap();
 		let report: dmarc::types::Report = from_reader(file_bytes.as_bytes()).unwrap();
-		println!("{:#?}", report);
+		// println!("{:#?}", report);
+
+		let mut tx = db_conn.start_transaction(TxOpts::default()).unwrap();
+
+		let organization = (
+			report.report_metadata.org_name,
+			report.report_metadata.email,
+			report.report_metadata.extra_contact_info
+		);
+		let mut organization_id = *organization_map.get(&organization).unwrap_or(&0);
+
+		if organization_id == 0 {
+			// not in db, add organization
+			tx.exec_drop("INSERT INTO dmarc_organizations(name, email, extra_contact_info) VALUES(?, ?, ?)", organization.clone()).unwrap();
+			organization_id = tx.query_first("SELECT LAST_INSERT_ID();").unwrap().unwrap();
+			organization_map.insert(organization, organization_id);
+		}
+
+		let received_at = fetch_result.internal_date().unwrap();
+		let policy_published_json = serde_json::to_string(&report.policy_published).unwrap();
+
+		// add report
+		tx.exec_drop(
+			"INSERT INTO dmarc_reports(organization_id, report_id, begin, end, policy_published, message_id, received_at, processed_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+			(
+				organization_id,
+				report.report_metadata.report_id,
+				report.report_metadata.date_range.begin,
+				report.report_metadata.date_range.end,
+				policy_published_json,
+				message_id,
+				received_at.timestamp(),
+				Utc::now().timestamp()
+			)
+		).unwrap();
+
+		let report_id: u64 = tx.query_first("SELECT LAST_INSERT_ID();").unwrap().unwrap();
+
+		for record in report.record {
+			tx.exec_drop(
+				"INSERT INTO dmarc_records(source_ip, count, policy_evaluated, identifiers, auth_results, report_id) VALUES(?, ?, ?, ?, ?, ?)",
+				(
+					record.row.source_ip,
+					record.row.count,
+					serde_json::to_string(&record.row.policy_evaluated).unwrap(),
+					serde_json::to_string(&record.identifiers).unwrap(),
+					serde_json::to_string(&record.auth_results).unwrap(),
+					report_id
+				)
+			).unwrap();
+		}
+
+		tx.commit().unwrap();
 	}
 
 	dmarc_session.logout().unwrap();
